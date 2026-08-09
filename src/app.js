@@ -17,9 +17,10 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/ready", (req, res) => {
-  res.status(200).json({
-    status: "ready",
-  });
+  // res.status(200).json({
+  //   status: "ready",
+  // });
+    res.status(500).json({ status: "intentionally broken" });
 });
 
 app.get("/me", (req, res) => {
