@@ -1,13 +1,15 @@
 name: Deploy
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.event.workflow_run.repository.full_name }}
 
 concurrency:
   group: test-deployment
@@ -16,12 +18,15 @@ concurrency:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set lowercase image name
         run: echo "IMAGE_NAME_LC=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
@@ -35,12 +40,12 @@ jobs:
 
       - name: Build and tag image
         run: |
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.sha }} .
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.event.workflow_run.head_sha }} .
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.event.workflow_run.head_sha }} ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
 
       - name: Push image
         run: |
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.event.workflow_run.head_sha }}
           docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
 
   deploy:
@@ -55,13 +60,11 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/peerless
-            NEW_SHA=${{ github.sha }}
+            NEW_SHA=${{ github.event.workflow_run.head_sha }}
 
-            # Save current running SHA before touching anything, for rollback
             CURRENT_SHA=$(grep -oP '(?<=peerless:)[a-f0-9]+' compose.yml || echo "none")
             echo "$CURRENT_SHA" > PREVIOUS_VERSION
 
-            # Deploy new version
             sed -i "s|image: ghcr.io/duubemmm/peerless:.*|image: ghcr.io/duubemmm/peerless:${NEW_SHA}|" compose.yml
             docker compose pull
             docker compose up -d
