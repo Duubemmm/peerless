@@ -55,9 +55,32 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/peerless
-            export IMAGE_TAG=${{ github.sha }}
-            sed -i "s|image: ghcr.io/duubemmm/peerless:.*|image: ghcr.io/duubemmm/peerless:${IMAGE_TAG}|" compose.yml
+            NEW_SHA=${{ github.sha }}
+
+            # Save current running SHA before touching anything, for rollback
+            CURRENT_SHA=$(grep -oP '(?<=peerless:)[a-f0-9]+' compose.yml || echo "none")
+            echo "$CURRENT_SHA" > PREVIOUS_VERSION
+
+            # Deploy new version
+            sed -i "s|image: ghcr.io/duubemmm/peerless:.*|image: ghcr.io/duubemmm/peerless:${NEW_SHA}|" compose.yml
             docker compose pull
             docker compose up -d
             sleep 5
-            curl -f http://localhost:3000/ready || exit 1
+
+            if curl -f http://localhost:3000/ready; then
+              echo "Deployment successful: ${NEW_SHA}"
+              echo "$NEW_SHA" > CURRENT_VERSION
+            else
+              echo "Health check failed. Rolling back to ${CURRENT_SHA}"
+              sed -i "s|image: ghcr.io/duubemmm/peerless:.*|image: ghcr.io/duubemmm/peerless:${CURRENT_SHA}|" compose.yml
+              docker compose pull
+              docker compose up -d
+              sleep 5
+              if curl -f http://localhost:3000/ready; then
+                echo "Rollback successful: restored ${CURRENT_SHA}"
+              else
+                echo "Rollback also failed. Manual intervention required."
+                exit 1
+              fi
+              exit 1
+            fi
